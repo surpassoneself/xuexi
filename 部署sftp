@@ -1,0 +1,171 @@
+本教程介绍如何在CentOS上设置和使用SFTP服务器。在开始之前，让我解释一下SFTP实际代表什么以及它用于什么。目前，大多数人都知道我们可以使用普通FTP将数据从服务器传输，下载或上传到客户端或客户端到服务器。但是这个协议很容易被匿名入侵者攻击（如果没有使用TLS），因为端口对任何人都是敞开的。因此，SFTP已被引入作为另一种替代方案，以满足加强安全级别的主要目的。
+SFTP代表SSH文件传输协议或安全文件传输协议。它使用与SSH打包在一起的单独协议来提供安全连接。
+1）初步说明：
+在本教程中，我使用的是64位版本的CentOS 7.同样的步骤也适用于CentOS 6.教程结果将显示如何为客户端提供对SFTP服务器的访问权限，但无法通过SSH登录到服务器本身。
+2）SFTP安装
+与普通的FTP不同，无需安装其他软件包即可使用SFTP。我们只需要在服务器上安装时已经安装的预制SSHD软件包。因此，只需检查以确认您是否已拥有所需的SSH软件包以下步骤是：
+rpm -qa|grep ssh
+类似于输出这样的信息
+[root@localhost ~]# rpm -qa|grep ssh
+libssh2-1.4.3-10.el7_2.1.x86_64
+openssh-7.4p1-13.el7_4.x86_64
+openssh-server-7.4p1-13.el7_4.x86_64
+openssh-clients-7.4p1-13.el7_4.x86_64
+3）SFTP配置
+完成安装的所有先决条件后，我们将逐步进入配置阶段。为了获得最佳实践，我们需要创建一个组和用户，以便我们可以管理所有将获得SFTP访问权限的用户。但首先，让我们创建一个名为data的附加文件夹。以下是步骤：
+mkdir -p /data/sftp
+chmod 701 /data
+基本上我正在尝试使用上面的步骤是获取一个单独的文件夹作为SFTP访问的主目录。SFTP用户的所有用户目录都是此数据文件夹的子目录。
+让我们为SFTP用户创建一个组，下面是步骤：
+groupadd sftpusers
+然后创建一个用户'howtoforge'并将其分配给SFTPUSERS组。以下是步骤：
+useradd -g sftpusers -d /upload -s /sbin/nologin mysftpuser
+passwd mysftpuser
+Changing password for user mysftpuser.
+New password:
+Retype new password:
+passwd: all authentication tokens updated successfully.
+以下是上述命令的说明：
+1.	我创建了一个用户，并使用-g命令将用户包含在sftpusers组中。
+2.	我通过设置-d / upload命令将用户的主目录分配到/ upload目录。这意味着稍后/ upload文件夹将位于/ data / mysftpuser / upload下。
+3.	我限制对/ sbin / nologin shell的访问，以确保用户只能使用SFTP协议，而不能使用SSH。
+4.	我将用户命名为“mysftpuser”。
+5.	为用户“mysftpuser”设置密码。
+
+现在让我们在/ data / mysftpuser下创建/ upload文件夹，然后为文件夹分配适当的所有权。
+mkdir -p /data/mysftpuser/upload
+chown -R root:sftpusers /data/mysftpuser
+chown -R mysftpuser:sftpusers /data/mysftpuser/upload
+完成后，验证目录/数据下的新文件夹是否存在，以及我们是否正确配置了配置。
+
+[root@localhost ~]# ls -ld /data/
+drwx-----x. 5 root root 54 Mar 22 14:29 /data/
+[root@localhost ~]# ls -ld /data/mysftpuser
+drwxr-xr-x. 3 root sftpusers 20 Mar 22 14:29 /data/mysftpuser
+[root@localhost ~]# ls -ld /data/mysftpuser/upload
+drwxr-xr-x. 2 mysftpuser sftpusers 6 Mar 22 14:29 /data/mysftpuser/upload
+[root@localhost ~]# cat /etc/passwd|grep mysftpuser
+mysftpuser:x:1001:1001::/upload:/sbin/nologin
+现在配置SSH协议以创建SFTP进程。这可以通过编辑/ etc / ssh / sshd_config下的配置文件来完成。以下是步骤：
+nano /etc/ssh/sshd_config
+在文件末尾添加以下行。
+Match Group sftpusers
+ChrootDirectory /data/%u
+ForceCommand internal-sftp
+完成后重启SSH服务，以下是步骤：
+service sshd status
+Redirecting to /bin/systemctl status sshd.service
+? sshd.service - OpenSSH server daemon
+Loaded: loaded (/usr/lib/systemd/system/sshd.service; enabled; vendor preset: enabled)
+Active: active (running) since Thu 2018-03-22 14:21:38 CET; 16min ago
+Docs: man:sshd(8)
+man:sshd_config(5)
+Main PID: 942 (sshd)
+CGroup: /system.slice/sshd.service
+??942 /usr/sbin/sshd -D
+Mar 22 14:21:37 localhost.localdomain systemd[1]: Starting OpenSSH server daemon...
+Mar 22 14:21:38 localhost.localdomain sshd[942]: Server listening on 0.0.0.0 port 22.
+Mar 22 14:21:38 localhost.localdomain sshd[942]: Server listening on :: port 22.
+Mar 22 14:21:38 localhost.localdomain systemd[1]: Started OpenSSH server daemon.
+Mar 22 14:21:49 localhost.localdomain sshd[1375]: Accepted password for root from 192.168.1.9 port 59465 ssh2
+service sshd restart
+[root@localhost ~]# service sshd restart
+Redirecting to /bin/systemctl restart sshd.service
+4.测试SFTP
+现在一切都已配置完毕，所以让我们进行测试以确保设置符合我们的目的。
+我将使用另一个名为TEST01的服务器访问SFTP。首先，我将验证SFTP服务器的端口。为此，我将使用nmap函数。如果您的客户端服务器没有它，您可以下载并使用yum进行安装，如下所示：
+yum list nmap
+Loaded plugins: fastestmirror
+Loading mirror speeds from cached hostfile
+* base: centos.copahost.com
+* epel: mirror.imt-systems.com
+* extras: mirror.imt-systems.com
+* remi-php72: remi.mirror.wearetriple.com
+* remi-safe: remi.mirror.wearetriple.com
+* updates: ftp.rz.uni-frankfurt.de
+Available Packages
+nmap.x86_64 2:6.40-7.el7
+yum install nmap -y
+Loaded plugins: fastestmirror
+Loading mirror speeds from cached hostfile
+* base: centos.copahost.com
+* epel: mirror.imt-systems.com
+* extras: mirror.imt-systems.com
+* remi-php72: remi.mirror.wearetriple.com
+* remi-safe: remi.mirror.wearetriple.com
+* updates: ftp.rz.uni-frankfurt.de
+Resolving Dependencies
+--> Running transaction check
+---> Package nmap.x86_64 2:6.40-7.el7 will be installed
+--> Processing Dependency: nmap-ncat = 2:6.40-7.el7 for package: 2:nmap-6.40-7.el7.x86_64
+--> Running transaction check
+---> Package nmap-ncat.x86_64 2:6.40-7.el7 will be installed
+--> Finished Dependency Resolution
+Dependencies Resolved
+=============================================================================================================================================================================================
+Package Arch Version Repository Size
+=============================================================================================================================================================================================
+Installing:
+nmap x86_64 2:6.40-7.el7 base 4.0 M
+Installing for dependencies:
+nmap-ncat x86_64 2:6.40-7.el7 base 201 k
+Transaction Summary
+=============================================================================================================================================================================================
+Install 1 Package (+1 Dependent package)
+Total download size: 4.2 M
+Installed size: 17 M
+Downloading packages:
+(1/2): nmap-ncat-6.40-7.el7.x86_64.rpm | 201 kB 00:00:01
+(2/2): nmap-6.40-7.el7.x86_64.rpm | 4.0 MB 00:00:14
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Total 300 kB/s | 4.2 MB 00:00:14
+Running transaction check
+Running transaction test
+Transaction test succeeded
+Running transaction
+Installing : 2:nmap-ncat-6.40-7.el7.x86_64 1/2
+Installing : 2:nmap-6.40-7.el7.x86_64 2/2
+Verifying : 2:nmap-ncat-6.40-7.el7.x86_64 1/2
+Verifying : 2:nmap-6.40-7.el7.x86_64 2/2
+Installed:
+nmap.x86_64 2:6.40-7.el7
+Dependency Installed:
+nmap-ncat.x86_64 2:6.40-7.el7
+Complete!
+[root@localhost ~]# nmap -n 192.168.1.100
+Starting Nmap 6.40 ( http://nmap.org ) at 2018-03-22 14:51 CET
+Nmap scan report for 192.168.1.100
+Host is up (0.000016s latency).
+Not shown: 997 closed ports
+PORT STATE SERVICE
+22/tcp open ssh
+Nmap done: 1 IP address (1 host up) scanned in 0.12 seconds
+
+您会注意到，当前在我们的SFTP服务器上，唯一的开放端口是SSH 22.现在，让我们尝试从TEST01客户端访问SFTP服务器（在我的情况下为IP：192.168.1.100）。以下是步骤：
+[root@TEST01 /]# sftp mysftpuser@192.168.1.100
+mysftpuser@192.168.1.100's password:
+Connected to 192.168.1.100.
+sftp> pwd
+Remote working directory: /upload
+sftp>
+大！现在我们的SFTP服务器可以从外部访问。请注意，默认目录是/ upload。这意味着即使我们在SFTP服务器目录中进行的先前配置是/ data / mysftpuser / upload，SFTP也只会将默认路径显示为/ upload。
+现在让我们尝试从SFTP服务器目录中获取文件到我们的测试客户端。首先，让我们在/ data / mysftpuser / upload下创建一个测试文件。以下是步骤：
+cd /data/mysftpuser/upload
+touch testing_file.txt
+然后返回我们的测试站点TEST01，看看我们是否能够获取并下载创建的文件。
+[root@TEST01 /]# sftp mysftpuser@192.168.1.100
+mysftpuser@192.168.1.100's password:
+Connected to 192.168.1.100.
+sftp> pwd
+Remote working directory: /upload
+sftp> ls
+testing_file.txt
+sftp> get testing_file.txt
+Fetching /upload/testing_file.txt to testing_file.txt
+sftp> quit
+优秀！我们的SFTP测试已经成功，让我们尝试使用用户mysftpuser访问SSH。如前所述，我们将配置设置为/ sbin / nologin，因此用户将无法使用SSH服务：
+[root@TEST01 ~]# ssh mysftpuser@192.168.1.100
+mysftpuser@192.168.1.100's password:
+This service allows sftp connections only.
+Connection to 192.168.1.100 closed.
+太好了！现在我们启动并运行了一个安全的SFTP服务器。
